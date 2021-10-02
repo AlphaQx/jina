@@ -1,4 +1,3 @@
-import time
 from http import HTTPStatus
 from pytest_kind import cluster
 
@@ -8,7 +7,6 @@ cluster.KIND_VERSION = 'v0.11.1'
 import pytest
 import requests
 
-
 from jina import Flow
 
 
@@ -17,44 +15,44 @@ def k8s_flow_with_needs(test_executor_image: str, executor_merger_image: str) ->
     flow = (
         Flow(
             name='test-flow',
-            port_expose=9090,
+            port_expose=8080,
             infrastructure='K8S',
             protocol='http',
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='segmenter',
             uses=test_executor_image,
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='textencoder',
             uses=test_executor_image,
             needs='segmenter',
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='textstorage',
             uses=test_executor_image,
             needs='textencoder',
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='imageencoder',
             uses=test_executor_image,
             needs='segmenter',
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='imagestorage',
             uses=test_executor_image,
             needs='imageencoder',
-            timeout_ready=30000,
+            timeout_ready=60000,
         )
         .add(
             name='merger',
             uses=executor_merger_image,
-            timeout_ready=30000,
+            timeout_ready=60000,
             needs=['imagestorage', 'textstorage'],
         )
     )
@@ -65,8 +63,8 @@ def pull_images(images, cluster, logger):
     # image pull anyways must be Never or IfNotPresent otherwise kubernetes will try to pull the image anyway
     logger.debug(f'Loading docker image into kind cluster...')
     for image in images:
-        cluster.needs_docker_image(image)
-    cluster.needs_docker_image('jinaai/jina:test-pip')
+        cluster.load_docker_image(image)
+    cluster.load_docker_image('jinaai/jina:test-pip')
     logger.debug(f'Done loading docker image into kind cluster...')
 
 
@@ -77,11 +75,9 @@ def run_test(images, cluster, flow, logger, endpoint, port_expose):
     return resp
 
 
-def send_dummy_request(
-    endpoint, k8s_cluster_namespaced, k8s_flow_with_needs, logger, port_expose
-):
+def send_dummy_request(endpoint, k8s_cluster, k8s_flow_with_needs, logger, port_expose):
     logger.debug(f'Starting port-forwarding to gateway service...')
-    with k8s_cluster_namespaced.port_forward(
+    with k8s_cluster.port_forward(
         'service/gateway', port_expose, port_expose, k8s_flow_with_needs.args.name
     ) as _:
         logger.debug(f'Port-forward running...')
@@ -108,14 +104,14 @@ def k8s_flow_with_init_container(
         port_expose=8080,
         infrastructure='K8S',
         protocol='http',
-        timeout_ready=30000,
+        timeout_ready=60000,
     ).add(
         name='test_executor',
         uses=test_executor_image,
         k8s_init_container_command=["python", "dump.py", "/shared/test_file.txt"],
         k8s_uses_init=dummy_dumper_image,
         k8s_mount_path='/shared',
-        timeout_ready=30000,
+        timeout_ready=60000,
     )
     return flow
 
@@ -129,14 +125,14 @@ def k8s_flow_with_sharding(
         port_expose=8080,
         infrastructure='K8S',
         protocol='http',
-        timeout_ready=30000,
+        timeout_ready=60000,
     ).add(
         name='test_executor',
         shards=3,
         replicas=2,
         uses=test_executor_image,
         uses_after=executor_merger_image,
-        timeout_ready=30000,
+        timeout_ready=60000,
     )
     return flow
 
@@ -144,7 +140,7 @@ def k8s_flow_with_sharding(
 @pytest.mark.timeout(3600)
 @pytest.mark.parametrize('k8s_connection_pool', [True, False])
 def test_flow_with_needs(
-    k8s_cluster_namespaced,
+    k8s_cluster,
     test_executor_image,
     executor_merger_image,
     k8s_flow_with_needs: Flow,
@@ -154,11 +150,11 @@ def test_flow_with_needs(
     k8s_flow_with_needs.args.k8s_connection_pool = k8s_connection_pool
     resp = run_test(
         [test_executor_image, executor_merger_image],
-        k8s_cluster_namespaced,
+        k8s_cluster,
         k8s_flow_with_needs,
         logger,
         endpoint='index',
-        port_expose=9090,
+        port_expose=8080,
     )
 
     expected_traversed_executors = {
@@ -178,7 +174,7 @@ def test_flow_with_needs(
 
 @pytest.mark.timeout(3600)
 def test_flow_with_init(
-    k8s_cluster_namespaced,
+    k8s_cluster,
     test_executor_image,
     dummy_dumper_image: str,
     k8s_flow_with_init_container: Flow,
@@ -186,7 +182,7 @@ def test_flow_with_init(
 ):
     resp = run_test(
         [test_executor_image, dummy_dumper_image],
-        k8s_cluster_namespaced,
+        k8s_cluster,
         k8s_flow_with_init_container,
         logger,
         endpoint='search',
@@ -202,7 +198,7 @@ def test_flow_with_init(
 
 @pytest.mark.timeout(3600)
 def test_flow_with_sharding(
-    k8s_cluster_namespaced,
+    k8s_cluster,
     test_executor_image,
     executor_merger_image,
     k8s_flow_with_sharding: Flow,
@@ -211,7 +207,7 @@ def test_flow_with_sharding(
 
     resp = run_test(
         [test_executor_image, executor_merger_image],
-        k8s_cluster_namespaced,
+        k8s_cluster,
         k8s_flow_with_sharding,
         logger,
         endpoint='index',
